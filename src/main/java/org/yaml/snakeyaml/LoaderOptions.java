@@ -42,6 +42,8 @@ public class LoaderOptions {
 
   private boolean mergeOnCompose = false;
 
+  private boolean strictMerge = false;
+
   /**
    * Secure by default - no custom classes are allowed
    */
@@ -251,6 +253,31 @@ public class LoaderOptions {
    */
   public void setMergeOnCompose(boolean mergeOnCompose) {
     this.mergeOnCompose = mergeOnCompose;
+  }
+
+  public boolean isStrictMerge() {
+    return strictMerge;
+  }
+
+  /**
+   * Reject a mapping when an explicitly defined key conflicts with a key introduced by a merge key
+   * (&lt;&lt;).
+   * <p>
+   * By default the YAML 1.1 merge semantics are kept: the explicitly defined key takes precedence
+   * over the merged key (and a warning may be logged according to
+   * {@link #setWarnOnDuplicateKeys(boolean)}). In this mode the conflict is resolved silently and
+   * the merged value is dropped.
+   * </p>
+   * <p>
+   * When set to <code>true</code> any conflict between an explicit key and a merged key is treated
+   * as a security configuration error. A {@link org.yaml.snakeyaml.error.MergeConflictException} is
+   * thrown which carries the marks of both the explicit key and the conflicting merged key.
+   * </p>
+   *
+   * @param strictMerge - <code>true</code> to reject conflicts between explicit and merged keys
+   */
+  public void setStrictMerge(boolean strictMerge) {
+    this.strictMerge = strictMerge;
   }
 
   public TagInspector getTagInspector() {

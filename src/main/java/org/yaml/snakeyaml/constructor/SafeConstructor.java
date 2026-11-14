@@ -18,6 +18,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.error.MergeConflictException;
 import org.yaml.snakeyaml.error.YAMLException;
 import org.yaml.snakeyaml.internal.Logger;
 import org.yaml.snakeyaml.nodes.MappingNode;
@@ -70,8 +71,53 @@ public class SafeConstructor extends BaseConstructor {
     // perform merging only on nodes containing merge node(s)
     processDuplicateKeys(node, forceStringKeys);
     if (node.isMerged()) {
+      if (loadingConfig.isStrictMerge()) {
+        checkMergeConflicts(node);
+      }
       node.setValue(mergeNode(node, true, new HashMap<Object, Integer>(),
           new ArrayList<NodeTuple>(), forceStringKeys));
+    }
+  }
+
+  /**
+   * Rejects conflicts between the explicit keys of {@code node} and the keys introduced by its
+   * merge key(s). The node is still untouched at this point, so the conflict is detected no matter
+   * whether the merge key appears before or after the explicit key.
+   *
+   * @param node the mapping containing one or more merge keys
+   */
+  private void checkMergeConflicts(MappingNode node) {
+    Map<Object, Node> explicitKeys = new HashMap<Object, Node>();
+    for (NodeTuple tuple : node.getValue()) {
+      Node keyNode = tuple.getKeyNode();
+      if (!keyNode.getTag().equals(Tag.MERGE)) {
+        explicitKeys.putIfAbsent(constructObject(keyNode), keyNode);
+      }
+    }
+    for (NodeTuple tuple : node.getValue()) {
+      if (tuple.getKeyNode().getTag().equals(Tag.MERGE)) {
+        checkMergeConflicts(tuple.getValueNode(), explicitKeys);
+      }
+    }
+  }
+
+  private void checkMergeConflicts(Node mergedValue, Map<Object, Node> explicitKeys) {
+    if (mergedValue instanceof SequenceNode) {
+      for (Node item : ((SequenceNode) mergedValue).getValue()) {
+        checkMergeConflicts(item, explicitKeys);
+      }
+    } else if (mergedValue instanceof MappingNode) {
+      for (NodeTuple tuple : ((MappingNode) mergedValue).getValue()) {
+        Node keyNode = tuple.getKeyNode();
+        if (!keyNode.getTag().equals(Tag.MERGE)) {
+          Object key = constructObject(keyNode);
+          Node explicitKeyNode = explicitKeys.get(key);
+          if (explicitKeyNode != null) {
+            throw new MergeConflictException(key, explicitKeyNode.getStartMark(),
+                keyNode.getStartMark());
+          }
+        }
+      }
     }
   }
 

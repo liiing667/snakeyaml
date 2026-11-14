@@ -14,10 +14,13 @@
 package org.yaml.snakeyaml.util;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+import org.yaml.snakeyaml.error.MergeConflictException;
 import org.yaml.snakeyaml.nodes.MappingNode;
 import org.yaml.snakeyaml.nodes.Node;
 import org.yaml.snakeyaml.nodes.NodeTuple;
@@ -58,13 +61,31 @@ public abstract class MergeUtils {
    * @see <a href="https://yaml.org/type/merge.html">YAML Merge Key Specification</a>
    */
   public List<NodeTuple> flatten(MappingNode node) {
+    return flatten(node, false);
+  }
+
+  /**
+   * Processes and resolves merge keys in a {@link MappingNode}.
+   * <p>
+   * When {@code strict} is <code>true</code> every scalar key which is defined explicitly in
+   * {@code node} and also present in one of the merged mappings causes a
+   * {@link MergeConflictException} carrying the marks of both the explicit key and the conflicting
+   * merged key. When {@code false} the YAML 1.1 precedence applies and the merged key is silently
+   * dropped.
+   * </p>
+   *
+   * @param node The MappingNode to process for merge keys.
+   * @param strict <code>true</code> to reject conflicts between explicit and merged keys
+   * @return A list of {@link NodeTuple} containing the merged keys and values.
+   */
+  public List<NodeTuple> flatten(MappingNode node, boolean strict) {
     List<NodeTuple> toProcess = node.getValue();
     List<NodeTuple> result = toProcess;
     boolean process = true;
     while (process) {
       process = false;
       List<NodeTuple> updated = new ArrayList<>(toProcess.size());
-      Set<String> keys = new HashSet<>(toProcess.size());
+      Map<String, NodeTuple> explicitKeys = new HashMap<>(toProcess.size());
       List<NodeTuple> merges = new ArrayList<>(2);
       for (NodeTuple tuple : toProcess) {
         Node keyNode = tuple.getKeyNode();
@@ -74,7 +95,7 @@ public abstract class MergeUtils {
           updated.add(tuple);
           if (keyNode instanceof ScalarNode) {
             ScalarNode sNode = (ScalarNode) keyNode;
-            keys.add(sNode.getValue());
+            explicitKeys.putIfAbsent(sNode.getValue(), tuple);
           }
         }
       }
@@ -85,16 +106,28 @@ public abstract class MergeUtils {
           for (Node ref : seqNode.getValue()) {
             MappingNode mergable = asMappingNode(ref);
             process = process || mergable.isMerged();
-            Tuple<List<NodeTuple>, Set<String>> filtered = filter(mergable.getValue(), keys);
+            if (strict) {
+              checkConflicts(mergable, explicitKeys);
+            }
+            Tuple<List<NodeTuple>, Set<String>> filtered =
+                filter(mergable.getValue(), explicitKeys.keySet());
             updated.addAll(filtered._1());
-            keys.addAll(filtered._2());
+            for (String addedKey : filtered._2()) {
+              explicitKeys.putIfAbsent(addedKey, null);
+            }
           }
         } else {
           MappingNode mergable = asMappingNode(valueNode);
           process = process || mergable.isMerged();
-          Tuple<List<NodeTuple>, Set<String>> filtered = filter(mergable.getValue(), keys);
+          if (strict) {
+            checkConflicts(mergable, explicitKeys);
+          }
+          Tuple<List<NodeTuple>, Set<String>> filtered =
+              filter(mergable.getValue(), explicitKeys.keySet());
           updated.addAll(filtered._1());
-          keys.addAll(filtered._2());
+          for (String addedKey : filtered._2()) {
+            explicitKeys.putIfAbsent(addedKey, null);
+          }
         }
       }
       result = updated;
@@ -103,6 +136,28 @@ public abstract class MergeUtils {
       }
     }
     return result;
+  }
+
+  /**
+   * Verifies that none of the scalar keys of {@code mergable} conflicts with an explicit key
+   * collected so far.
+   *
+   * @param mergable the mapping merged into the current mapping
+   * @param explicitKeys scalar keys already taken, mapped to the tuple defining them explicitly (or
+   *        <code>null</code> when the key was itself introduced by an earlier merge)
+   */
+  private void checkConflicts(MappingNode mergable, Map<String, NodeTuple> explicitKeys) {
+    for (NodeTuple tuple : mergable.getValue()) {
+      Node keyNode = tuple.getKeyNode();
+      if (keyNode instanceof ScalarNode) {
+        String key = ((ScalarNode) keyNode).getValue();
+        NodeTuple explicitTuple = explicitKeys.get(key);
+        if (explicitTuple != null) {
+          throw new MergeConflictException(key, explicitTuple.getKeyNode().getStartMark(),
+              keyNode.getStartMark());
+        }
+      }
+    }
   }
 
   /**

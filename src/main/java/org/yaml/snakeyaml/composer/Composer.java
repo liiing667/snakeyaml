@@ -339,7 +339,7 @@ public class Composer {
     }
 
     if (loadingConfig.isMergeOnCompose() && node.isMerged()) {
-      List<NodeTuple> updatedValue = mergeUtils.flatten(node);
+      List<NodeTuple> updatedValue = mergeUtils.flatten(node, loadingConfig.isStrictMerge());
       node.setValue(updatedValue);
       node.setMerged(false);
     }
